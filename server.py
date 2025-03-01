@@ -32,6 +32,11 @@ def is_private_ip(ip):
     """Check if an IP address is private."""
     return ipaddress.ip_address(ip).is_private
 
+# Root Route (Fix for 404 Error)
+@app.route('/')
+def home():
+    return jsonify({"status": "success", "message": "Server is running!"})
+
 # Register or update clients
 class ClientRegister(Resource):
     def post(self):
