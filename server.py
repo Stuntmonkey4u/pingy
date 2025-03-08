@@ -30,7 +30,10 @@ init_db()
 
 def is_private_ip(ip):
     """Check if an IP address is private."""
-    return ipaddress.ip_address(ip).is_private
+    try:
+        return ipaddress.ip_address(ip).is_private
+    except ValueError:
+        return False  # Or handle the error as appropriate
 
 # Root Route (Fix for 404 Error)
 @app.route('/')
@@ -46,12 +49,13 @@ class ClientRegister(Resource):
 
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO clients (ip, last_checkin, status) VALUES (?, ?, ?) ON CONFLICT(ip) DO UPDATE SET last_checkin=?, status='active'",
-                           (client_ip, datetime.now().isoformat(), 'active', datetime.now().isoformat()))
-            conn.commit()
-
-        return jsonify({"status": "success", "message": "Client registered successfully."})
-
+            try:
+                cursor.execute("INSERT INTO clients (ip, last_checkin, status) VALUES (?, ?, ?) ON CONFLICT(ip) DO UPDATE SET last_checkin=?, status='active'",
+                               (client_ip, datetime.now().isoformat(), 'active', datetime.now().isoformat()))
+                conn.commit()
+                return jsonify({"status": "success", "message": "Client registered successfully."})
+            except sqlite3.Error as e:
+                return jsonify({"status": "fail", "message": f"Database error: {str(e)}"})
 # Start/Stop Monitoring for Registered Clients
 class ControlClients(Resource):
     def get(self):
@@ -61,10 +65,12 @@ class ControlClients(Resource):
 
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            cursor.execute("UPDATE clients SET status = ?", (command,))
-            conn.commit()
-
-        return jsonify({"status": "success", "message": f"Command '{command}' sent to clients."})
+            try:
+                cursor.execute("UPDATE clients SET status = ?", (command,))
+                conn.commit()
+                return jsonify({"status": "success", "message": f"Command '{command}' sent to clients."})
+            except sqlite3.Error as e:
+                return jsonify({"status": "fail", "message": f"Database error: {str(e)}"})
 
 # Clients Checking for Commands
 class ClientCheck(Resource):
@@ -72,12 +78,14 @@ class ClientCheck(Resource):
         client_ip = request.remote_addr
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT status FROM clients WHERE ip = ?", (client_ip,))
-            result = cursor.fetchone()
-
-        if result:
-            return jsonify({"status": "success", "command": result[0]})
-        return jsonify({"status": "fail", "message": "Client not registered."})
+            try:
+                cursor.execute("SELECT status FROM clients WHERE ip = ?", (client_ip,))
+                result = cursor.fetchone()
+                if result:
+                    return jsonify({"status": "success", "command": result[0]})
+                return jsonify({"status": "fail", "message": "Client not registered."})
+            except sqlite3.Error as e:
+                return jsonify({"status": "fail", "message": f"Database error: {str(e)}"})
 
 # Handle Log Uploads
 class LogUpload(Resource):
@@ -89,8 +97,11 @@ class LogUpload(Resource):
             return jsonify({"status": "fail", "message": "No log file provided."})
 
         filename = os.path.join(LOG_DIR, f"{client_ip}_{datetime.now().strftime('%Y%m%d%H%M%S')}.log")
-        file.save(filename)
-        return jsonify({"status": "success", "message": "Log uploaded successfully."})
+        try:
+            file.save(filename)
+            return jsonify({"status": "success", "message": "Log uploaded successfully."})
+        except Exception as e:
+            return jsonify({"status": "fail", "message": f"Error saving log: {str(e)}"})
 
 # Register Resources
 api.add_resource(ClientRegister, '/register')
