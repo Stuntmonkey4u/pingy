@@ -3,90 +3,128 @@ import time
 import socket
 import ipaddress
 import os
+import logging
 
-SERVER_IP = "192.168.1.100"  # Replace with your server IP
-SERVER_URL = f"http://{SERVER_IP}:5000"
-
+# Configuration (use environment variables or a config file for production)
+SERVER_IP = os.environ.get("SERVER_IP", "192.168.1.100")  # Default IP
+SERVER_URL = f"http://{SERVER_IP}:5000" # Changed to HTTP
 LOG_FILE = "connectivity_log.txt"
+CHECK_INTERVAL = 10  # seconds
+
+# Configure logging
+logging.basicConfig(filename=LOG_FILE, level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 
 def is_private_ip(ip):
     """Ensure the server IP is private before connecting."""
-    return ipaddress.ip_address(ip).is_private
+    try:
+        return ipaddress.ip_address(ip).is_private
+    except ValueError:
+        logging.error(f"Invalid IP address: {ip}")
+        return False
 
 if not is_private_ip(SERVER_IP):
-    print("Error: Server IP is not private. Exiting.")
+    logging.error("Server IP is not private. Exiting.")
     exit(1)
 
 def register_client():
     """Register the client with the server."""
     try:
         response = requests.post(f"{SERVER_URL}/register", timeout=5)
-        if response.json().get("status") == "success":
-            print("Registered successfully with server.")
+        response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+        data = response.json()
+
+        if data.get("status") == "success":
+            logging.info("Registered successfully with server.")
+            return True
         else:
-            print("Failed to register:", response.json().get("message"))
-            exit(1)
+            logging.error(f"Failed to register: {data.get('message')}")
+            return False
+
     except requests.exceptions.RequestException as e:
-        print(f"Error registering with server: {e}")
-        exit(1)
+        logging.error(f"Error registering with server: {e}")
+        return False
 
 def check_for_command():
     """Check if the server has sent a start/stop command."""
     try:
         response = requests.get(f"{SERVER_URL}/check_command", timeout=5)
+        response.raise_for_status()
         data = response.json()
         if data.get("status") == "success":
             return data.get("command")
+        else:
+            logging.warning(f"Server returned: {data.get('message')}")
+            return None  # Server indicated a problem
     except requests.exceptions.RequestException as e:
-        print(f"Error checking command: {e}")
-    return None
+        logging.error(f"Error checking command: {e}")
+        return None
+
 
 def upload_log():
     """Upload the log file to the server."""
     if not os.path.exists(LOG_FILE):
+        logging.info("No log file to upload.")
         return
-    
-    with open(LOG_FILE, "rb") as log:
-        try:
+
+    try:
+        with open(LOG_FILE, "rb") as log:
             response = requests.post(f"{SERVER_URL}/upload_log", files={"log": log}, timeout=5)
-            if response.json().get("status") == "success":
-                print("Log uploaded successfully.")
+            response.raise_for_status()
+            data = response.json()
+            if data.get("status") == "success":
+                logging.info("Log uploaded successfully.")
                 os.remove(LOG_FILE)  # Delete after successful upload
-        except requests.exceptions.RequestException as e:
-            print(f"Log upload failed: {e}")
+            else:
+                logging.error(f"Log upload failed: {data.get('message')}")
+
+    except (requests.exceptions.RequestException, OSError) as e:
+        logging.error(f"Log upload failed: {e}")
+
 
 def monitor_connection():
     """Monitor internet connectivity."""
     is_connected = True
-    with open(LOG_FILE, "w") as log:
-        while True:
-            try:
-                socket.create_connection(("8.8.8.8", 53), timeout=5)
-                if not is_connected:
-                    log.write("Reconnected at {}\n".format(time.ctime()))
-                    is_connected = True
-            except OSError:
-                if is_connected:
-                    log.write("Disconnected at {}\n".format(time.ctime()))
-                    is_connected = False
-            
-            time.sleep(10)  # Check every 10 seconds
-            
-            # Check for stop command
-            if check_for_command() == "stop":
-                print("Stopping monitoring...")
-                break
+    logging.info("Starting monitoring...")
 
-register_client()
+    while True:
+        try:
+            socket.create_connection(("8.8.8.8", 53), timeout=5)
+            if not is_connected:
+                logging.info("Reconnected")
+                is_connected = True
+        except OSError as e:
+            if is_connected:
+                logging.warning(f"Disconnected: {e}")
+                is_connected = False
 
-while True:
-    command = check_for_command()
-    if command == "start":
-        print("Starting monitoring...")
-        monitor_connection()
-        upload_log()
-    elif command == "stop":
-        print("Monitoring is stopped.")
-    
-    print("No command received. Checking again in 10 seconds...")
-    time.sleep(10)
+        # Check for stop command *before* sleeping to react promptly
+        command = check_for_command()
+        if command == "stop":
+            logging.info("Stopping monitoring (command received).")
+            break
+
+        time.sleep(CHECK_INTERVAL)
+
+    logging.info("Monitoring stopped.")
+    upload_log()  # Upload the log *after* stopping
+
+
+# Main execution flow
+if __name__ == "__main__":
+    if not register_client():
+        exit(1)
+
+    while True:
+        command = check_for_command()
+
+        if command == "start":
+            monitor_connection()  # This function handles uploading the log
+        elif command == "stop":
+            logging.info("Monitoring is stopped (command received).")
+        elif command is not None:
+            logging.warning(f"Unknown command received: {command}")
+        else:
+            logging.info("No command received from server.")
+
+        time.sleep(CHECK_INTERVAL)
