@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from flask_restful import Api, Resource
 import os
 import sqlite3
@@ -33,14 +33,31 @@ def is_private_ip(ip):
     try:
         return ipaddress.ip_address(ip).is_private
     except ValueError:
-        return False  # Or handle the error as appropriate
+        return False
 
-# Root Route (Fix for 404 Error)
+# --- Web UI Routes ---
 @app.route('/')
-def home():
-    return jsonify({"status": "success", "message": "Server is running!"})
+def dashboard():
+    """Main dashboard displaying all registered clients."""
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT ip, last_checkin, status FROM clients")
+        clients = cursor.fetchall()  # List of tuples (ip, last_checkin, status)
 
-# Register or update clients
+    return render_template('index.html', clients=clients)
+
+@app.route('/logs')
+def logs():
+    """Page to view uploaded logs."""
+    log_files = os.listdir(LOG_DIR) if os.path.exists(LOG_DIR) else []
+    return render_template('logs.html', log_files=log_files)
+
+@app.route('/analytics')
+def analytics():
+    """Page to view connection analytics."""
+    return render_template('analytics.html')
+
+# --- API Routes ---
 class ClientRegister(Resource):
     def post(self):
         client_ip = request.remote_addr
@@ -56,7 +73,7 @@ class ClientRegister(Resource):
                 return jsonify({"status": "success", "message": "Client registered successfully."})
             except sqlite3.Error as e:
                 return jsonify({"status": "fail", "message": f"Database error: {str(e)}"})
-# Start/Stop Monitoring for Registered Clients
+
 class ControlClients(Resource):
     def get(self):
         command = request.args.get('command')
@@ -72,7 +89,6 @@ class ControlClients(Resource):
             except sqlite3.Error as e:
                 return jsonify({"status": "fail", "message": f"Database error: {str(e)}"})
 
-# Clients Checking for Commands
 class ClientCheck(Resource):
     def get(self):
         client_ip = request.remote_addr
@@ -87,7 +103,6 @@ class ClientCheck(Resource):
             except sqlite3.Error as e:
                 return jsonify({"status": "fail", "message": f"Database error: {str(e)}"})
 
-# Handle Log Uploads
 class LogUpload(Resource):
     def post(self):
         client_ip = request.remote_addr
