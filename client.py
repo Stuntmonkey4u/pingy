@@ -51,15 +51,15 @@ def check_for_command():
         response = requests.get(f"{SERVER_URL}/check_command", timeout=5)
         response.raise_for_status()
         data = response.json()
+        print(f"Received command: {data}")  # Debugging
         if data.get("status") == "success":
             return data.get("command")
         else:
             logging.warning(f"Server returned: {data.get('message')}")
-            return None  # Server indicated a problem
+            return None
     except requests.exceptions.RequestException as e:
         logging.error(f"Error checking command: {e}")
         return None
-
 
 def upload_log():
     """Upload the log file to the server."""
